@@ -13,4 +13,12 @@ dist/
 .coverage
 htmlcov/
 .DS_Store
-results/
+
+# Outputs and caches
+results/*
+!results/.gitkeep
+data/cache/*
+!data/cache/.gitkeep
+
+# Local secrets
+.env
