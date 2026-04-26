@@ -10,6 +10,8 @@ Weekly stock-basket rotation strategy with three coordinated pieces:
 
 The backtest and paper trader **import the same `run_pipeline` function**. If they diverge, the backtest is worthless — so all selection logic lives in `trader/` and is shared.
 
+For a visual walkthrough of the algorithm and the weekly cadence, see [`docs/algorithm.md`](docs/algorithm.md).
+
 ---
 
 ## Workflow
