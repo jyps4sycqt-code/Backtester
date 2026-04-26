@@ -104,6 +104,10 @@ def fetch_yfinance_into_cache(
         if raw.empty:
             logger.warning("yfinance returned empty frame for %s", ticker)
             continue
+        # yfinance >=0.2.40 returns a MultiIndex on columns even for a single
+        # ticker (levels: Price, Ticker). Flatten down to just Price names.
+        if isinstance(raw.columns, pd.MultiIndex):
+            raw.columns = raw.columns.get_level_values(0)
         raw = raw.rename(
             columns={"Open": "open", "High": "high", "Low": "low", "Close": "close", "Volume": "volume"}
         )
