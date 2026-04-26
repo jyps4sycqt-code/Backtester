@@ -12,6 +12,8 @@ The backtest and paper trader **import the same `run_pipeline` function**. If th
 
 For a visual walkthrough of the algorithm and the weekly cadence, see [`docs/algorithm.md`](docs/algorithm.md).
 
+To set up automated weekly Alpaca paper trading on a Mac, see [`automation/SETUP.md`](automation/SETUP.md).
+
 ---
 
 ## Workflow
