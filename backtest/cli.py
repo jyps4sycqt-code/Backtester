@@ -20,6 +20,7 @@ from backtest.report import write_report
 from backtest.simulator import Simulator, SimulatorConfig
 from trader.config import StrategyConfig
 from trader.data import PriceCache, fetch_yfinance_into_cache
+from trader.sectors import ensure_sectors
 from trader.universe import load_universe
 
 logger = logging.getLogger("backtest")
@@ -41,6 +42,8 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     p.add_argument("--slippage-bps", type=float, default=5.0)
     p.add_argument("--universe", type=str, default=None, help="Path to a one-ticker-per-line universe file.")
     p.add_argument("--cache-dir", type=str, default="data/cache")
+    p.add_argument("--sectors-file", type=str, default="data/sectors.json",
+                   help="JSON cache of {ticker: sector}; built/refreshed when --fetch is set.")
     p.add_argument("--output-dir", type=str, default="results")
     p.add_argument("--in-sample-split", type=str, default="2022-12-31",
                    help="Last date considered in-sample (test starts the day after).")
@@ -79,12 +82,20 @@ def main(argv: list[str] | None = None) -> int:
         logger.error("No universe tickers in the cache.")
         return 2
 
+    sectors = ensure_sectors(universe, args.sectors_file, fetch=args.fetch)
+    if not sectors:
+        logger.warning("No sectors loaded -- diversification cap will be a no-op.")
+    else:
+        unknown = sum(1 for v in sectors.values() if v == "Unknown")
+        logger.info("Sectors: %d known, %d unknown across %d tickers",
+                    len(sectors) - unknown, unknown, len(sectors))
+
     sim_config = SimulatorConfig(
         start=pd.Timestamp(args.start),
         end=pd.Timestamp(args.end),
         capital=args.capital,
         slippage_bps=args.slippage_bps,
-        sectors={},
+        sectors=sectors,
         seed=args.seed,
     )
     strategy_config = StrategyConfig(capital=args.capital, backtest_mode=True)
@@ -114,6 +125,7 @@ def main(argv: list[str] | None = None) -> int:
         "slippage_bps": args.slippage_bps,
         "universe_size": len(universe),
         "universe_source": args.universe or "DEFAULT (SPX+NDX current, survivorship-biased)",
+        "sectors_loaded": sum(1 for v in sectors.values() if v and v != "Unknown"),
         "picks": strategy_config.picks,
         "max_per_sector": strategy_config.max_per_sector,
         "use_fundamentals": strategy_config.use_fundamentals,
