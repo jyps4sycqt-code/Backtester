@@ -76,6 +76,11 @@ class Snapshot:
     sectors: Mapping[str, str]            # ticker -> sector string
     spy_history: Optional[pd.Series] = None
     headlines: Optional[Mapping[str, list[str]]] = None  # ticker -> headline strings
+    # Tickers excluded because their next earnings call falls inside the
+    # planned holding window. Computed by the caller (simulator / paper
+    # runner) using trader.earnings.tickers_reporting_in. Maps ticker
+    # -> ISO earnings date so the pipeline can report the reason.
+    earnings_in_window: Optional[Mapping[str, str]] = None
 
 
 def run_pipeline(snapshot: Snapshot, config: StrategyConfig) -> PipelineResult:
@@ -111,20 +116,31 @@ def run_pipeline(snapshot: Snapshot, config: StrategyConfig) -> PipelineResult:
         keywords=(),
     )
 
+    # 1b. Earnings filter: drop names reporting inside the holding window.
+    # This is *additive* to the kill list, with its own reason code.
+    earnings_excluded: dict[str, str] = {}
+    if snapshot.earnings_in_window:
+        for ticker, iso in snapshot.earnings_in_window.items():
+            earnings_excluded[ticker.upper()] = f"earnings on {iso}"
+
+    all_excluded = kill.excluded | frozenset(earnings_excluded)
+
     # 2. Tiered candidate construction.
     candidates, tier_used = build_candidates(
         closes,
         snapshot.dollar_volume,
         tiers=config.tiers,
-        excluded=kill.excluded,
+        excluded=all_excluded,
         min_picks=config.picks,
     )
 
     if candidates.empty:
         warnings.append("No candidates survived even the most relaxed tier.")
+        merged_reasons = dict(kill.reasons)
+        merged_reasons.update(earnings_excluded)
         return PipelineResult(
             as_of=as_of, picks=[], tier_used=tier_used,
-            macro=macro, excluded=dict(kill.reasons), config=config, warnings=warnings,
+            macro=macro, excluded=merged_reasons, config=config, warnings=warnings,
         )
 
     # 3. Score the surviving candidates.
@@ -134,9 +150,11 @@ def run_pipeline(snapshot: Snapshot, config: StrategyConfig) -> PipelineResult:
     scores = scores.dropna(subset=["composite"])
     if scores.empty:
         warnings.append("All candidates had NaN composites (insufficient history).")
+        merged_reasons = dict(kill.reasons)
+        merged_reasons.update(earnings_excluded)
         return PipelineResult(
             as_of=as_of, picks=[], tier_used=tier_used,
-            macro=macro, excluded=dict(kill.reasons), config=config,
+            macro=macro, excluded=merged_reasons, config=config,
             candidate_pool_size=len(candidates), warnings=warnings,
         )
 
@@ -168,12 +186,14 @@ def run_pipeline(snapshot: Snapshot, config: StrategyConfig) -> PipelineResult:
             )
         )
 
+    merged_reasons = dict(kill.reasons)
+    merged_reasons.update(earnings_excluded)
     return PipelineResult(
         as_of=as_of,
         picks=picks,
         tier_used=tier_used,
         macro=macro,
-        excluded=dict(kill.reasons),
+        excluded=merged_reasons,
         config=config,
         candidate_pool_size=len(candidates),
         warnings=warnings,

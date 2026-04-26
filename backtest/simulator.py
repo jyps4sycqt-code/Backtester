@@ -25,6 +25,7 @@ import pandas as pd
 
 from trader.config import StrategyConfig
 from trader.data import PriceCache
+from trader.earnings import tickers_reporting_in
 from trader.pipeline import PipelineResult, Snapshot, run_pipeline
 
 logger = logging.getLogger(__name__)
@@ -37,6 +38,7 @@ class SimulatorConfig:
     capital: float = 1_000.0
     slippage_bps: float = 5.0
     sectors: dict[str, str] = field(default_factory=dict)
+    earnings_dates: dict[str, Optional[str]] = field(default_factory=dict)
     spy_ticker: str = "SPY"
     seed: int = 0
 
@@ -83,6 +85,7 @@ def _build_snapshot(
     sectors: dict[str, str],
     spy_ticker: str,
     config: StrategyConfig,
+    earnings_in_window: Optional[dict[str, str]] = None,
 ) -> Snapshot:
     closes = {}
     dvol = {}
@@ -107,6 +110,7 @@ def _build_snapshot(
         sectors=sectors,
         spy_history=spy_hist,
         headlines=None,
+        earnings_in_window=earnings_in_window,
     )
 
 
@@ -168,10 +172,15 @@ class Simulator:
             if exit_date is None:
                 break
 
+            in_window = tickers_reporting_in(
+                self.sim_config.earnings_dates, entry, exit_date,
+            ) if self.sim_config.earnings_dates else {}
+
             snap = _build_snapshot(
                 friday, self.cache, self.universe,
                 self.sim_config.sectors, self.sim_config.spy_ticker,
                 self.strategy_config,
+                earnings_in_window=in_window,
             )
             result = self.pipeline_fn(snap, self.strategy_config)
 

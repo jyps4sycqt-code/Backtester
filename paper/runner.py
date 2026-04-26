@@ -24,6 +24,7 @@ import pandas as pd
 from paper.broker import Broker, BrokerOrder
 from trader.config import StrategyConfig
 from trader.data import PriceCache
+from trader.earnings import tickers_reporting_in
 from trader.pipeline import PipelineResult, Snapshot, run_pipeline
 
 logger = logging.getLogger(__name__)
@@ -60,6 +61,7 @@ class PaperRunner:
     universe: Sequence[str]
     config: StrategyConfig = field(default_factory=StrategyConfig)
     sectors: dict[str, str] = field(default_factory=dict)
+    earnings_dates: dict[str, Optional[str]] = field(default_factory=dict)
     log_dir: Path = Path("results")
 
     def __post_init__(self) -> None:
@@ -78,12 +80,21 @@ class PaperRunner:
             dvol[t] = sliced["close"] * sliced["volume"]
         spy = self.cache.slice_asof("SPY", as_of, lookback_days=400)
         spy_hist = spy["close"] if spy is not None else None
+
+        # Holding window for the next basket: as_of (Sun/Fri) -> 7 days out.
+        # We use a calendar-week window since the runner doesn't know the
+        # exact next-trading-day for arbitrary calendars.
+        in_window = tickers_reporting_in(
+            self.earnings_dates, as_of, as_of + pd.Timedelta(days=7),
+        ) if self.earnings_dates else {}
+
         return Snapshot(
             as_of=as_of,
             closes=pd.DataFrame(closes).sort_index() if closes else pd.DataFrame(),
             dollar_volume=pd.DataFrame(dvol).sort_index() if dvol else pd.DataFrame(),
             sectors=self.sectors,
             spy_history=spy_hist,
+            earnings_in_window=in_window,
         )
 
     def run(self, as_of: pd.Timestamp, *, dry: bool = False) -> PaperRun:

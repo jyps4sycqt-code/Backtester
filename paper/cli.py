@@ -21,6 +21,7 @@ from paper.dry_run import DryRunBroker
 from paper.runner import PaperRunner
 from trader.config import StrategyConfig
 from trader.data import PriceCache, fetch_yfinance_into_cache
+from trader.earnings import ensure_earnings
 from trader.sectors import ensure_sectors
 from trader.universe import load_universe
 
@@ -39,6 +40,7 @@ def _build_broker(adapter: str) -> Broker:
 def _common_args(p: argparse.ArgumentParser) -> None:
     p.add_argument("--cache-dir", default="data/cache")
     p.add_argument("--sectors-file", default="data/sectors.json")
+    p.add_argument("--earnings-file", default="data/earnings.json")
     p.add_argument("--universe", default=None)
     p.add_argument("--broker", choices=("auto", "dry-run", "alpaca"), default="auto",
                    help="`auto` uses Alpaca if creds are set, else dry-run.")
@@ -74,8 +76,9 @@ def _cmd_run(args: argparse.Namespace) -> int:
     config = StrategyConfig(capital=args.capital)
 
     sectors = ensure_sectors(universe, args.sectors_file, fetch=args.fetch)
+    earnings = ensure_earnings(universe, args.earnings_file, fetch=args.fetch)
     runner = PaperRunner(broker=broker, cache=cache, universe=universe,
-                         config=config, sectors=sectors)
+                         config=config, sectors=sectors, earnings_dates=earnings)
     as_of = pd.Timestamp(args.as_of) if args.as_of else pd.Timestamp.utcnow().normalize()
     run = runner.run(as_of, dry=args.dry)
     print(run.summary())

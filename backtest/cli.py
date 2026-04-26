@@ -20,6 +20,7 @@ from backtest.report import write_report
 from backtest.simulator import Simulator, SimulatorConfig
 from trader.config import StrategyConfig
 from trader.data import PriceCache, fetch_yfinance_into_cache
+from trader.earnings import ensure_earnings
 from trader.sectors import ensure_sectors
 from trader.universe import load_universe
 
@@ -44,6 +45,8 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     p.add_argument("--cache-dir", type=str, default="data/cache")
     p.add_argument("--sectors-file", type=str, default="data/sectors.json",
                    help="JSON cache of {ticker: sector}; built/refreshed when --fetch is set.")
+    p.add_argument("--earnings-file", type=str, default="data/earnings.json",
+                   help="JSON cache of {ticker: next earnings date ISO}; refreshed when --fetch is set.")
     p.add_argument("--output-dir", type=str, default="results")
     p.add_argument("--in-sample-split", type=str, default="2022-12-31",
                    help="Last date considered in-sample (test starts the day after).")
@@ -90,12 +93,17 @@ def main(argv: list[str] | None = None) -> int:
         logger.info("Sectors: %d known, %d unknown across %d tickers",
                     len(sectors) - unknown, unknown, len(sectors))
 
+    earnings = ensure_earnings(universe, args.earnings_file, fetch=args.fetch)
+    known_earn = sum(1 for v in earnings.values() if v)
+    logger.info("Earnings dates loaded for %d / %d tickers", known_earn, len(universe))
+
     sim_config = SimulatorConfig(
         start=pd.Timestamp(args.start),
         end=pd.Timestamp(args.end),
         capital=args.capital,
         slippage_bps=args.slippage_bps,
         sectors=sectors,
+        earnings_dates=earnings,
         seed=args.seed,
     )
     strategy_config = StrategyConfig(capital=args.capital, backtest_mode=True)
