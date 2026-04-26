@@ -59,16 +59,69 @@ def save_earnings(path: str | Path, earnings: Mapping[str, Optional[str]]) -> No
     p.write_text(json.dumps(dict(sorted(earnings.items())), indent=2, default=str))
 
 
+def _next_from_earnings_dates(tk, today_iso: str) -> Optional[str]:
+    """Try Ticker.earnings_dates, the most reliable yfinance earnings source."""
+    try:
+        df = tk.earnings_dates
+    except Exception:
+        return None
+    if df is None or len(df) == 0:
+        return None
+    try:
+        # Index is a DatetimeIndex (sometimes tz-aware). Pick smallest future entry.
+        idx = pd.to_datetime(df.index).tz_localize(None) if df.index.tz is not None else pd.to_datetime(df.index)
+        future = sorted(d for d in idx if d.date().isoformat() >= today_iso)
+        if future:
+            return future[0].date().isoformat()
+    except Exception:
+        return None
+    return None
+
+
+def _next_from_calendar(tk) -> Optional[str]:
+    try:
+        cal = tk.calendar
+    except Exception:
+        return None
+    if isinstance(cal, dict):
+        return _to_iso(cal.get("Earnings Date") or cal.get("earningsDate"))
+    if isinstance(cal, pd.DataFrame) and not cal.empty:
+        try:
+            if "Earnings Date" in cal.index:
+                return _to_iso(cal.loc["Earnings Date"].iloc[0])
+        except Exception:
+            return None
+    return None
+
+
+def _next_from_info(tk) -> Optional[str]:
+    try:
+        info = tk.info or {}
+    except Exception:
+        return None
+    ts = info.get("earningsTimestamp") or info.get("earningsTimestampStart")
+    if not ts:
+        return None
+    try:
+        return pd.Timestamp(int(ts), unit="s").date().isoformat()
+    except Exception:
+        return None
+
+
 def fetch_earnings_yfinance(
     tickers: Iterable[str],
     *,
     existing: Mapping[str, Optional[str]] | None = None,
 ) -> dict[str, Optional[str]]:
-    """Look up next-earnings-date for each ticker via yfinance Ticker.calendar.
+    """Look up next-earnings-date for each ticker via yfinance.
 
-    `existing` may contain stale entries (past dates); those are refreshed.
-    Returns the merged mapping. None means yfinance had no data for the
-    ticker (treated as "no known earnings in the window" downstream).
+    Tries three sources in order:
+      1. Ticker.earnings_dates   (DataFrame; pick smallest future date)
+      2. Ticker.calendar         (dict or DataFrame; older API)
+      3. Ticker.info             (earningsTimestamp unix epoch)
+
+    Refetches tickers whose cached date is missing or in the past.
+    None means yfinance had no usable data for the ticker.
     """
     try:
         import yfinance as yf  # type: ignore
@@ -76,32 +129,25 @@ def fetch_earnings_yfinance(
         raise ImportError("yfinance not installed; `pip install yfinance`") from exc
 
     out: dict[str, Optional[str]] = {k.upper(): v for k, v in (existing or {}).items()}
-    today_iso = pd.Timestamp.utcnow().date().isoformat()
+    today_iso = pd.Timestamp.now(tz="UTC").date().isoformat()
 
     for ticker in tickers:
         upper = ticker.upper()
         cached = out.get(upper)
-        # Refetch if missing OR if the cached date is in the past.
         if cached is not None and cached >= today_iso:
             continue
         try:
-            cal = yf.Ticker(ticker).calendar
+            tk = yf.Ticker(ticker)
         except Exception as exc:  # pragma: no cover - network
             logger.warning("earnings lookup failed for %s: %s", ticker, exc)
             out[upper] = None
             continue
 
-        next_date: Optional[str] = None
-        if isinstance(cal, dict):
-            next_date = _to_iso(cal.get("Earnings Date") or cal.get("earningsDate"))
-        elif isinstance(cal, pd.DataFrame) and not cal.empty:
-            # Older yfinance returned a DataFrame with rows like "Earnings Date".
-            try:
-                if "Earnings Date" in cal.index:
-                    next_date = _to_iso(cal.loc["Earnings Date"].iloc[0])
-            except Exception:
-                next_date = None
-
+        next_date = (
+            _next_from_earnings_dates(tk, today_iso)
+            or _next_from_calendar(tk)
+            or _next_from_info(tk)
+        )
         out[upper] = next_date
 
     return out

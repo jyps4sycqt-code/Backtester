@@ -33,30 +33,43 @@ if not tickers:
     print("Basket is empty -- nothing to check.")
     sys.exit(0)
 
-# Hold window: today through 7 calendar days out covers Mon-open to
-# next-Mon-open even with weekends.
-today = pd.Timestamp.utcnow().normalize()
+today = pd.Timestamp.now(tz="UTC").normalize().tz_localize(None)
 window_start = today
 window_end = today + pd.Timedelta(days=7)
 
 print(f"Tickers held: {', '.join(tickers)}")
 print(f"Window:       {window_start.date()} to {window_end.date()}")
 print()
-print("Fetching next earnings dates via yfinance...")
+print("Fetching next earnings dates via yfinance (tries 3 sources)...")
 
-earnings = ensure_earnings(tickers, "data/earnings.json", fetch=True)
+# Force-refresh: drop any cached entries for the held tickers so the new
+# multi-source fetcher runs against them, even if a stale None was cached.
+cache_path = Path("data/earnings.json")
+if cache_path.exists():
+    cache = json.loads(cache_path.read_text())
+    held_upper = {t.upper() for t in tickers}
+    cache = {k: v for k, v in cache.items() if k.upper() not in held_upper}
+    cache_path.write_text(json.dumps(cache, indent=2))
+
+earnings = ensure_earnings(tickers, cache_path, fetch=True)
 in_window = tickers_reporting_in(earnings, window_start, window_end)
 
 print()
 print(f"{'Ticker':<8} {'Next earnings':<14} {'In hold window?'}")
-print("-" * 40)
+print("-" * 42)
 flagged = []
+unknown = []
 for t in tickers:
     iso = earnings.get(t.upper())
-    in_w = "YES" if t.upper() in in_window else ""
-    if t.upper() in in_window:
+    if iso is None:
+        unknown.append(t)
+        in_w = "?"
+    elif t.upper() in in_window:
         flagged.append(t)
-    print(f"{t:<8} {iso or 'unknown':<14} {in_w}")
+        in_w = "YES"
+    else:
+        in_w = "no"
+    print(f"{t:<8} {iso or 'UNKNOWN':<14} {in_w}")
 
 print()
 if flagged:
@@ -65,7 +78,15 @@ if flagged:
         print(f"  - {t}: earnings {earnings[t.upper()]}")
     print()
     print("Consider liquidating these manually in Alpaca to avoid the gap risk.")
-    print("From next Sunday's run onward, the strategy will exclude them automatically.")
+    print("From next Sunday's run onward, the strategy excludes them automatically.")
+elif unknown:
+    print(f"INCONCLUSIVE: yfinance returned no earnings data for {len(unknown)} of {len(tickers)} names:")
+    for t in unknown:
+        print(f"  - {t}")
+    print()
+    print("This is a known yfinance reliability issue, not a guarantee they don't report.")
+    print("Cross-check manually at https://finance.yahoo.com/calendar/earnings or")
+    print("https://www.nasdaq.com/market-activity/earnings -- search each ticker.")
 else:
-    print("No basket names report this hold window. Strategy is clean.")
+    print(f"VERIFIED CLEAN: all {len(tickers)} names have known earnings dates outside the window.")
 PY
